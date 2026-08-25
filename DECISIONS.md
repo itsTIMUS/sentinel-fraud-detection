@@ -32,3 +32,23 @@ Unique merchants: 693
 Categories: 14
 Highest fraud category: shopping_net (0.0176)
 Peak fraud hour: 22 (0.0288)
+## 2026-08-25 — Day 1: Cost Model + Walking Skeleton
+
+### EDA observations
+- 1,296,675 rows, 0.58% fraud rate (7,506 frauds)
+- Date range: 2019-01-01 to 2020-06-21
+- Peak fraud hours: 22:00-03:00 (~3% fraud rate vs ~0.1% daytime)
+- Highest fraud category: shopping_net (1.76%)
+- 983 unique cards, 693 merchants, 14 categories
+- Amount range: ₹1.00 to ₹28,948.90, median ₹47.52
+
+### Baseline results (temporal validation split, last 20%)
+- Approve everything: ₹3,123,266
+- Rules baseline: ₹5,290,381 (PR-AUC: 0.3489)
+- Logistic Regression: ₹18,289,845 (PR-AUC: 0.3186)
+
+### Why baselines cost MORE than approve-all
+LR sends 210K/259K transactions to REVIEW at ₹45 each = ~₹9.5M in review costs alone. The raw probabilities are uncalibrated and too aggressive. This proves calibration (Day 3) is essential — uncalibrated scores make the cost model useless.
+
+### Walking skeleton achieved
+curl → FastAPI → LR model → cost decision → SQLite audit ledger. Full loop working. Model will be swapped to LightGBM on Day 2 without changing the API contract.
