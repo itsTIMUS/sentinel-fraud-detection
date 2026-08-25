@@ -1,0 +1,23 @@
+# Data
+data/
+artifacts/
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Misc
+*.egg-info/
+dist/
+build/
