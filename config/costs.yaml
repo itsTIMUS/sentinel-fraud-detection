@@ -1,0 +1,29 @@
+# Sentinel Cost Parameters
+# Every ₹ assumption is cited. Change a number, thresholds auto-update.
+
+# Fixed penalty per chargeback (RBI/NPCI guidelines for card-not-present disputes)
+chargeback_fee_inr: 1500
+
+# Fraction of goods value recovered when fraud occurs
+# 0.0 for digital goods (nothing to recover), ~0.3 for physical goods
+goods_recovery_rate: 0.0
+
+# Merchant gross margin lost when a legitimate order is wrongly blocked
+# Indian e-commerce average: 15-22% (Flipkart/Meesho benchmarks)
+gross_margin: 0.18
+
+# Fixed cost of friction — customer frustration from unnecessary challenge
+# Based on customer experience research: cart abandonment + support cost
+friction_cost_inr: 250
+
+# Probability a wrongly-blocked customer never returns
+churn_probability: 0.04
+
+# Average customer lifetime value
+customer_ltv_inr: 6000
+
+# Cost of one manual review (analyst time: ~3 min at ₹900/hr)
+review_cost_inr: 45
+
+# Fraction of actual frauds caught by manual analyst review
+analyst_catch_rate: 0.92

@@ -19,3 +19,16 @@ SMOTE inflates offline metrics and destroys probability calibration. Using `scal
 
 ### Why LightGBM over LLM for scoring
 1000x faster, costs nothing to run, produces calibrated probabilities, fully auditable via pred_contrib. LLM will only narrate (off hot path) with deterministic template fallback.
+
+
+--- Key Stats for DECISIONS.md ---
+Date range: 2019-01-01 00:00:18 to 2020-06-21 12:13:37
+Total rows: 1,296,675
+Fraud rate: 0.0058 (7,506 frauds)
+Amount range: ₹1.00 to ₹28948.90
+Median amount: ₹47.52
+Unique cards: 983
+Unique merchants: 693
+Categories: 14
+Highest fraud category: shopping_net (0.0176)
+Peak fraud hour: 22 (0.0288)
