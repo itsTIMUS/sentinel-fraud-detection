@@ -95,3 +95,72 @@ Swapped model in API without changing the contract. Latency dropped from 753ms t
 
 ### Why raw LightGBM scores still need calibration
 LightGBM outputs raw scores, not true probabilities. With scale_pos_weight, these are further distorted. The cost model depends on p being a real probability — if p=0.05 doesn't mean "5% chance of fraud," every ₹ calculation downstream is fiction. Calibration is Day 3's top priority.
+
+
+## 2026-08-27 — Day 3: Calibration + Evaluation (Model Frozen)
+
+### Calibration results
+- Brier score BEFORE calibration: 0.001731
+- Brier score AFTER calibration: 0.000655
+- Improvement: 62.1%
+- Method: Isotonic regression (CalibratedClassifierCV with cv="prefit")
+- Used 70% of validation for calibration fitting, 30% for verification
+
+### Why calibration matters
+Raw LightGBM scores with scale_pos_weight are NOT real probabilities. Before calibration, when the model said "60% fraud chance," the true frequency was ~12%. Every ₹ calculation downstream depends on p being real — without calibration, the entire cost model is fiction. The reliability diagram proves this visually.
+
+### Break-even curve (THE pitch centrepiece)
+The break-even probability is a function of transaction amount:
+- ₹500 transaction: threshold = 0.225 (relaxed — blocking costs more than the fraud)
+- ₹5,000 transaction: threshold = 0.176
+- ₹20,000 transaction: threshold = 0.160 (paranoid — fraud cost dominates)
+This means Sentinel is deliberately lenient on small transactions and deliberately strict on large ones. No single fixed threshold — computed per transaction.
+
+### Held-out test evaluation (RUN ONCE, NO TUNING AFTER)
+Test set: 555,719 rows (0.39% fraud rate)
+
+**Model performance:**
+- PR-AUC: 0.9513
+- Brier score: 0.000583
+- Precision at operating point: 94.8%
+- Recall at operating point: 95.6%
+
+**Confusion matrix:**
+- TP (blocked fraud): 1,823
+- FP (blocked legit): 100
+- FN (allowed fraud): 85
+- TN (allowed legit): 551,897
+
+**Decisions distribution:** 551,982 ALLOW / 1,814 REVIEW / 1,923 BLOCK
+
+### ₹ Cost comparison (held-out test) — THE money shot
+| Strategy | Total ₹ Cost | Savings vs Approve-All |
+|---|---|---|
+| Approve everything | ₹4,350,825 | — |
+| Naive 0.5 threshold | ₹527,133 | 87.9% |
+| **Sentinel (cost-aware)** | **₹309,487** | **92.9%** |
+
+### Full model progression (₹ cost on respective evaluation sets)
+| Model | PR-AUC | Total ₹ Cost | Notes |
+|---|---|---|---|
+| Approve everything | — | ₹3,123,266 (val) / ₹4,350,825 (test) | Floor baseline |
+| Rules baseline | 0.3489 | ₹5,290,381 | Worse than approve-all due to excessive reviews |
+| Logistic Regression | 0.3186 | ₹18,289,845 | Terrible — sent 210K/259K to REVIEW at ₹45 each |
+| LightGBM (raw) | 0.9692 | ₹338,557 | Massive jump, but uncalibrated |
+| LightGBM (calibrated) | 0.9513 | ₹309,487 | Final model, honest probabilities |
+
+### Problem encountered: calibrator pickle error
+**What broke:** The calibrator was saved with `LGBMWrapper` defined in `__main__` (the training script). When uvicorn loads the API, `__main__` is uvicorn itself — Python couldn't find the class and crashed with `AttributeError: Can't get attribute 'LGBMWrapper'`.
+
+**Root cause:** Python's pickle stores the full module path of classes. If a class is defined in a script run directly (`__main__`), the path becomes `__main__.ClassName`. Any other process loading that pickle needs `__main__` to contain that class — which it won't.
+
+**How we fixed it:**
+1. Created `src/sentinel/model_wrapper.py` with `LGBMWrapper` class
+2. Re-ran calibration importing from that module (`from src.sentinel.model_wrapper import LGBMWrapper`)
+3. Now pickle stores `src.sentinel.model_wrapper.LGBMWrapper` — findable from any process
+4. API imports `model_wrapper` so the class is available during deserialization
+
+**Lesson:** Always define serializable classes in importable modules, never in `__main__`. This is a classic Python gotcha with joblib/pickle.
+
+### Model is FROZEN
+No more tuning, no more touching the test set. From here, it's all product engineering (Day 4) and documentation (Day 5).
