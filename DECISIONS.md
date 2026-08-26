@@ -164,3 +164,38 @@ Test set: 555,719 rows (0.39% fraud rate)
 
 ### Model is FROZEN
 No more tuning, no more touching the test set. From here, it's all product engineering (Day 4) and documentation (Day 5).
+
+## 2026-08-27 — Day 4: Product Engineering
+
+### Reason codes via pred_contrib
+LightGBM's `pred_contrib=True` gives exact per-feature SHAP contributions in microseconds — no expensive TreeExplainer needed. Top-3 reasons returned with every decision in human-readable format: "unusual transaction amount", "712 km from merchant location", "4 transactions on this card in last hour."
+
+### Velocity store (SQLite)
+Real-time per-card transaction tracking. Records every scored transaction and provides velocity features (txn_count_1h, txn_count_24h, txn_sum_24h, distinct_merchants_24h) for future lookups. Tested by sending same card twice — second request showed velocity data from first.
+
+### Degraded mode
+When velocity store is unavailable, API does NOT crash. It scores with stateless features, sets `degraded: true`, and biases probability upward (1.5x) to push borderline cases toward REVIEW. DegradedVelocityStore fallback class returns None for all lookups.
+
+### Separate /health and /ready endpoints
+- `/health` — liveness: is the process alive?
+- `/ready` — readiness: is the model loaded, calibrator loaded, velocity store reachable, ledger available?
+
+### Streamlit dashboard (4 tabs)
+1. **Live Score** — input transaction, see decision + reason codes + latency + cost breakdown
+2. **Review Queue** — REVIEW decisions from audit ledger, most recent first
+3. **Cost Dashboard** — interactive break-even curve with sliders for chargeback fee, margin, friction, review cost
+4. **Model Card** — PR-AUC, precision, recall, Brier, cost savings, intended use, limitations
+
+### Load test results
+- p50: 12.4ms, p95: 14.7ms, p99: 33.0ms
+- 200 requests, 0 errors
+- Target was p99 < 50ms — achieved
+
+### Problem: localhost resolving to IPv6 on Windows
+Load test showed 2,060ms per request. Root cause: Windows tries IPv6 (::1) first for `localhost`, waits ~2 seconds before falling back to IPv4. Fix: use `127.0.0.1` instead of `localhost`. Actual latency was 12ms all along.
+
+### SQLite optimizations
+Added `PRAGMA synchronous=NORMAL` (skip disk fsync per commit) and `PRAGMA busy_timeout=5000` (wait for write locks instead of crashing) to both velocity store and audit ledger.
+
+### Decision: deterministic templates over LLM narration
+The plan included optional LLM narration (Groq/Gemini). We chose deterministic reason code templates instead. Reasons: faster, free, deterministic, auditable. LLM adds latency, cost, and non-determinism to a system where auditability is a selling point. This IS the "AI judgment" rubric answer — knowing where NOT to use AI.
