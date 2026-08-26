@@ -15,12 +15,14 @@ sys.path.insert(0, ".")
 from src.sentinel.cost import load_costs, make_decision
 from src.sentinel.ledger import AuditLedger
 from src.sentinel.features import build_features, features_to_array
-from src.sentinel.model_wrapper import LGBMWrapper  
+from src.sentinel.model_wrapper import LGBMWrapper
+from src.sentinel.explain import get_reason_codes
+from src.sentinel.store import VelocityStore, DegradedVelocityStore
 
 # --- App ---
 app = FastAPI(
     title="Sentinel — Cost-Aware Fraud Detection",
-    version="0.3.0",
+    version="0.4.0",
     description="Scores transactions and decides ALLOW / REVIEW / BLOCK based on expected ₹ cost.",
 )
 
@@ -31,7 +33,15 @@ booster = lgb.Booster(model_file=str(ARTIFACTS / "model.lgb"))
 calibrator = joblib.load(ARTIFACTS / "calibrator.joblib")
 ledger = AuditLedger("data/audit.db")
 
-# Warm the model (first predict is slow due to JIT)
+# Velocity store with fallback
+try:
+    velocity_store = VelocityStore("data/velocity.db")
+    print("✅ Velocity store initialized")
+except Exception:
+    velocity_store = DegradedVelocityStore()
+    print("⚠️ Velocity store unavailable — running in degraded mode")
+
+# Warm the model
 dummy = np.zeros((1, 15))
 booster.predict(dummy)
 
@@ -83,12 +93,26 @@ class DecisionResponse(BaseModel):
     model_version: str
     latency_ms: float
     degraded: bool
+    reason_codes: list = []
 
 
 # --- Endpoints ---
 @app.get("/health")
 def health():
+    """Liveness check — is the service running?"""
     return {"status": "healthy", "model": "lgbm-v0.3-calibrated"}
+
+
+@app.get("/ready")
+def ready():
+    """Readiness check — is everything loaded and reachable?"""
+    return {
+        "ready": True,
+        "model_loaded": booster is not None,
+        "calibrator_loaded": calibrator is not None,
+        "velocity_store": velocity_store.is_available,
+        "ledger": True,
+    }
 
 
 @app.post("/v1/score", response_model=DecisionResponse)
@@ -97,8 +121,11 @@ def score_transaction(txn: TransactionRequest):
     start = time.perf_counter()
 
     try:
-        # Parse datetime for features
         dt = pd.to_datetime(txn.trans_date_trans_time)
+
+        # Get velocity history (returns None if store is unavailable)
+        history = velocity_store.get_history(str(txn.cc_num), txn.unix_time)
+        is_degraded = not velocity_store.is_available
 
         # Build features using the SHARED feature builder
         txn_dict = {
@@ -115,14 +142,29 @@ def score_transaction(txn: TransactionRequest):
             "category": txn.category,
         }
 
-        features = build_features(txn_dict, history=None)
+        features = build_features(txn_dict, history=history)
         feature_array = features_to_array(features).reshape(1, -1)
 
         # Score with calibrated model
         p_fraud = float(calibrator.predict_proba(feature_array)[:, 1][0])
 
+        # In degraded mode, bias toward REVIEW for safety
+        if is_degraded and p_fraud > 0.01:
+            p_fraud = min(p_fraud * 1.5, 0.999)
+
         # Decide
         result = make_decision(p_fraud=p_fraud, amount=txn.amt, costs=costs)
+
+        # Get reason codes
+        reasons = get_reason_codes(booster, feature_array, features, top_k=3)
+
+        # Record transaction in velocity store for future lookups
+        velocity_store.record(
+            card_id=str(txn.cc_num),
+            unix_time=txn.unix_time,
+            amount=txn.amt,
+            merchant=txn.merchant,
+        )
 
         latency = (time.perf_counter() - start) * 1000
         dec_id = f"dec_{uuid.uuid4().hex[:12]}"
@@ -139,7 +181,8 @@ def score_transaction(txn: TransactionRequest):
             "expected_loss_if_reviewed_inr": result["expected_loss_if_reviewed_inr"],
             "model_version": "lgbm-v0.3-calibrated",
             "latency_ms": round(latency, 2),
-            "degraded": False,
+            "degraded": is_degraded,
+            "reason_codes": str(reasons),
         })
 
         return DecisionResponse(
@@ -152,7 +195,8 @@ def score_transaction(txn: TransactionRequest):
             amount_inr=result["amount_inr"],
             model_version="lgbm-v0.3-calibrated",
             latency_ms=round(latency, 2),
-            degraded=False,
+            degraded=is_degraded,
+            reason_codes=reasons,
         )
 
     except Exception as e:
