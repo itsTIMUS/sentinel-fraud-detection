@@ -4,6 +4,7 @@ import time
 import uuid
 import numpy as np
 import lightgbm as lgb
+import joblib
 from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
@@ -14,11 +15,12 @@ sys.path.insert(0, ".")
 from src.sentinel.cost import load_costs, make_decision
 from src.sentinel.ledger import AuditLedger
 from src.sentinel.features import build_features, features_to_array
+from src.sentinel.model_wrapper import LGBMWrapper  
 
 # --- App ---
 app = FastAPI(
     title="Sentinel — Cost-Aware Fraud Detection",
-    version="0.2.0",
+    version="0.3.0",
     description="Scores transactions and decides ALLOW / REVIEW / BLOCK based on expected ₹ cost.",
 )
 
@@ -26,6 +28,7 @@ app = FastAPI(
 ARTIFACTS = Path("artifacts/sparkov")
 costs = load_costs()
 booster = lgb.Booster(model_file=str(ARTIFACTS / "model.lgb"))
+calibrator = joblib.load(ARTIFACTS / "calibrator.joblib")
 ledger = AuditLedger("data/audit.db")
 
 # Warm the model (first predict is slow due to JIT)
@@ -33,6 +36,7 @@ dummy = np.zeros((1, 15))
 booster.predict(dummy)
 
 print("✅ LightGBM model loaded and warmed")
+print("✅ Calibrator loaded")
 print("✅ Cost config loaded")
 print("✅ Audit ledger initialized")
 
@@ -84,7 +88,7 @@ class DecisionResponse(BaseModel):
 # --- Endpoints ---
 @app.get("/health")
 def health():
-    return {"status": "healthy", "model": "lgbm-v0.2"}
+    return {"status": "healthy", "model": "lgbm-v0.3-calibrated"}
 
 
 @app.post("/v1/score", response_model=DecisionResponse)
@@ -114,8 +118,8 @@ def score_transaction(txn: TransactionRequest):
         features = build_features(txn_dict, history=None)
         feature_array = features_to_array(features).reshape(1, -1)
 
-        # Score with native LightGBM booster
-        p_fraud = float(booster.predict(feature_array)[0])
+        # Score with calibrated model
+        p_fraud = float(calibrator.predict_proba(feature_array)[:, 1][0])
 
         # Decide
         result = make_decision(p_fraud=p_fraud, amount=txn.amt, costs=costs)
@@ -133,7 +137,7 @@ def score_transaction(txn: TransactionRequest):
             "expected_loss_if_allowed_inr": result["expected_loss_if_allowed_inr"],
             "expected_loss_if_blocked_inr": result["expected_loss_if_blocked_inr"],
             "expected_loss_if_reviewed_inr": result["expected_loss_if_reviewed_inr"],
-            "model_version": "lgbm-v0.2",
+            "model_version": "lgbm-v0.3-calibrated",
             "latency_ms": round(latency, 2),
             "degraded": False,
         })
@@ -146,7 +150,7 @@ def score_transaction(txn: TransactionRequest):
             expected_loss_if_blocked_inr=result["expected_loss_if_blocked_inr"],
             expected_loss_if_reviewed_inr=result["expected_loss_if_reviewed_inr"],
             amount_inr=result["amount_inr"],
-            model_version="lgbm-v0.2",
+            model_version="lgbm-v0.3-calibrated",
             latency_ms=round(latency, 2),
             degraded=False,
         )
