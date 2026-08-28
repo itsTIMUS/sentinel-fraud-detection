@@ -87,8 +87,10 @@ class DecisionResponse(BaseModel):
     decision: str
     risk_probability: float
     expected_loss_if_allowed_inr: float
-    expected_loss_if_blocked_inr: float
+    expected_loss_if_challenged_inr: float
     expected_loss_if_reviewed_inr: float
+    expected_loss_if_blocked_inr: float
+    expected_profit_inr: float
     amount_inr: float
     model_version: str
     latency_ms: float
@@ -100,7 +102,7 @@ class DecisionResponse(BaseModel):
 @app.get("/health")
 def health():
     """Liveness check — is the service running?"""
-    return {"status": "healthy", "model": "lgbm-v0.3-calibrated"}
+    return {"status": "healthy", "model": "lgbm-v0.4-challenge"}
 
 
 @app.get("/ready")
@@ -179,7 +181,7 @@ def score_transaction(txn: TransactionRequest):
             "expected_loss_if_allowed_inr": result["expected_loss_if_allowed_inr"],
             "expected_loss_if_blocked_inr": result["expected_loss_if_blocked_inr"],
             "expected_loss_if_reviewed_inr": result["expected_loss_if_reviewed_inr"],
-            "model_version": "lgbm-v0.3-calibrated",
+            "model_version": "lgbm-v0.4-challenge",
             "latency_ms": round(latency, 2),
             "degraded": is_degraded,
             "reason_codes": str(reasons),
@@ -190,10 +192,12 @@ def score_transaction(txn: TransactionRequest):
             decision=result["decision"],
             risk_probability=result["risk_probability"],
             expected_loss_if_allowed_inr=result["expected_loss_if_allowed_inr"],
-            expected_loss_if_blocked_inr=result["expected_loss_if_blocked_inr"],
+            expected_loss_if_challenged_inr=result["expected_loss_if_challenged_inr"],
             expected_loss_if_reviewed_inr=result["expected_loss_if_reviewed_inr"],
+            expected_loss_if_blocked_inr=result["expected_loss_if_blocked_inr"],
+            expected_profit_inr=result["expected_profit_inr"],
             amount_inr=result["amount_inr"],
-            model_version="lgbm-v0.3-calibrated",
+            model_version="lgbm-v0.4-challenge",
             latency_ms=round(latency, 2),
             degraded=is_degraded,
             reason_codes=reasons,

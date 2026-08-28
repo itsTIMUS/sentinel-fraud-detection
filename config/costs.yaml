@@ -27,3 +27,17 @@ review_cost_inr: 45
 
 # Fraction of actual frauds caught by manual analyst review
 analyst_catch_rate: 0.92
+
+# --- NEW: Review delay cost ---
+# Expected customer loss from being held in review queue (delay, uncertainty)
+review_delay_churn_inr: 80
+
+# --- NEW: CHALLENGE (3DS/OTP step-up authentication) ---
+# Minor friction from OTP/3DS popup (much less than a full block)
+challenge_friction_inr: 15
+
+# Fraction of legitimate customers who complete the challenge successfully
+challenge_success_rate: 0.85
+
+# Fraction of fraudsters who drop off when faced with 3DS/OTP
+fraudster_3ds_dropout: 0.95
