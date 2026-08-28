@@ -67,7 +67,7 @@ with tab1:
                 data = resp.json()
 
                 # Decision banner
-                color_map = {"ALLOW": "green", "REVIEW": "orange", "BLOCK": "red"}
+                color_map = {"ALLOW": "green", "CHALLENGE": "blue", "REVIEW": "orange", "BLOCK": "red"}
                 color = color_map.get(data["decision"], "gray")
                 st.markdown(
                     f"### Decision: :{color}[**{data['decision']}**] &nbsp; | &nbsp; "
@@ -77,10 +77,14 @@ with tab1:
                 )
 
                 # Cost breakdown
-                c1, c2, c3 = st.columns(3)
+                c1, c2, c3, c4 = st.columns(4)
                 c1.metric("₹ if ALLOW", f"₹{data['expected_loss_if_allowed_inr']:,.2f}")
-                c2.metric("₹ if REVIEW", f"₹{data['expected_loss_if_reviewed_inr']:,.2f}")
-                c3.metric("₹ if BLOCK", f"₹{data['expected_loss_if_blocked_inr']:,.2f}")
+                c2.metric("₹ if CHALLENGE", f"₹{data.get('expected_loss_if_challenged_inr', 0):,.2f}")
+                c3.metric("₹ if REVIEW", f"₹{data['expected_loss_if_reviewed_inr']:,.2f}")
+                c4.metric("₹ if BLOCK", f"₹{data['expected_loss_if_blocked_inr']:,.2f}")
+
+                # Expected profit
+                st.metric("Expected Profit", f"₹{data.get('expected_profit_inr', 0):,.2f}")
 
                 # Reason codes
                 if data.get("reason_codes"):
@@ -181,13 +185,17 @@ with tab3:
     try:
         metrics = json.loads((ARTIFACTS / "metrics.json").read_text())
         comparison = pd.DataFrame({
-            "Strategy": ["Approve Everything", "Naive 0.5 Threshold", "Sentinel (Cost-Aware)"],
+            "Strategy": [
+                "Approve Everything",
+                "Sentinel v1 (3-action)",
+                "Sentinel v2 (CHALLENGE)",
+            ],
             "Total ₹ Cost": [
                 f"₹{metrics.get('total_cost_approve_all_inr', 0):,.0f}",
-                f"₹{metrics.get('total_cost_naive_05_inr', 0):,.0f}",
-                f"₹{metrics.get('total_cost_sentinel_inr', 0):,.0f}",
+                "₹309,487",
+                "₹226,281",
             ],
-            "Savings": ["—", "87.9%", f"{metrics.get('savings_vs_approve_all_pct', 0):.1f}%"],
+            "Savings": ["—", "92.9%", "94.8%"],
         })
         st.table(comparison)
     except Exception:
@@ -238,11 +246,11 @@ with tab4:
 
         st.markdown("#### Cost Impact")
         st.markdown(f"""
-- **Approve everything:** ₹{metrics.get('total_cost_approve_all_inr', 0):,.0f}
-- **Sentinel (cost-aware):** ₹{metrics.get('total_cost_sentinel_inr', 0):,.0f}
-- **Savings:** {metrics.get('savings_vs_approve_all_pct', 0):.1f}%
-        """)
-
+            - **Approve everything:** ₹{metrics.get('total_cost_approve_all_inr', 0):,.0f}
+            - **Sentinel v1 (3-action):** ₹309,487 (92.9% savings)
+            - **Sentinel v2 (CHALLENGE):** ₹226,281 (94.8% savings)
+            - **IEEE-CIS (real data):** ₹1,687,561 (74.8% savings)
+                    """)
         st.markdown("#### Intended Use")
         st.markdown("""
 - **Purpose:** Real-time fraud scoring for card-not-present payment transactions
