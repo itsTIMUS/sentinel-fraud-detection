@@ -121,7 +121,7 @@ y_pred_full = calibrator.predict_proba(X_val)[:, 1]
 
 total_cost_sentinel = 0.0
 total_cost_approve_all = 0.0
-decisions = {"ALLOW": 0, "REVIEW": 0, "BLOCK": 0}
+decisions = {"ALLOW": 0, "CHALLENGE": 0, "REVIEW": 0, "BLOCK": 0}
 tp, fp, fn, tn = 0, 0, 0, 0
 
 for i in range(len(y_val)):
