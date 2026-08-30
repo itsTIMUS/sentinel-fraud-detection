@@ -30,7 +30,7 @@ analyst_catch_rate: 0.92
 
 # --- NEW: Review delay cost ---
 # Expected customer loss from being held in review queue (delay, uncertainty)
-review_delay_churn_inr: 80
+review_delay_churn_inr: 30
 
 # --- NEW: CHALLENGE (3DS/OTP step-up authentication) ---
 # Minor friction from OTP/3DS popup (much less than a full block)
