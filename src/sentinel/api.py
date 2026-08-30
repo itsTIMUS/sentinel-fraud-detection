@@ -156,6 +156,12 @@ def score_transaction(txn: TransactionRequest):
 
         # Decide
         result = make_decision(p_fraud=p_fraud, amount=txn.amt, costs=costs)
+        # Reject inference: 1% of BLOCKs are allowed through for unbiased labels
+        import random
+        holdout = False
+        if result["decision"] == "BLOCK" and random.random() < 0.01:
+            result["decision"] = "ALLOW"
+            holdout = True
 
         # Get reason codes
         reasons = get_reason_codes(booster, feature_array, features, top_k=3)
@@ -184,6 +190,7 @@ def score_transaction(txn: TransactionRequest):
             "model_version": "lgbm-v0.4-challenge",
             "latency_ms": round(latency, 2),
             "degraded": is_degraded,
+            "holdout_allowed": holdout,
             "reason_codes": str(reasons),
         })
 

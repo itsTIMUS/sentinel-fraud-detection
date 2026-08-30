@@ -31,7 +31,8 @@ class AuditLedger:
                 expected_loss_review REAL,
                 model_version TEXT,
                 latency_ms REAL,
-                degraded INTEGER DEFAULT 0
+                degraded INTEGER DEFAULT 0,
+                holdout_allowed INTEGER DEFAULT 0
             )
         """)
         self.conn.commit()
@@ -40,10 +41,10 @@ class AuditLedger:
         """Write one decision to the ledger."""
         self.conn.execute(
             """INSERT OR IGNORE INTO decisions 
-               (decision_id, timestamp, trans_num, amount, risk_probability,
+                (decision_id, timestamp, trans_num, amount, risk_probability,
                 decision, expected_loss_allow, expected_loss_block,
-                expected_loss_review, model_version, latency_ms, degraded)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                expected_loss_review, model_version, latency_ms, degraded, holdout_allowed)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 record["decision_id"],
                 datetime.now(timezone.utc).isoformat(),
@@ -57,6 +58,7 @@ class AuditLedger:
                 record["model_version"],
                 record["latency_ms"],
                 1 if record.get("degraded", False) else 0,
+                1 if record.get("holdout_allowed", False) else 0,
             ),
         )
         self.conn.commit()
