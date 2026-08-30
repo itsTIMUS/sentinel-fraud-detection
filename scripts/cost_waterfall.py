@@ -206,3 +206,153 @@ plt.tight_layout()
 plt.savefig(PLOTS / "cost_waterfall.png", dpi=150)
 plt.close()
 print("✅ Waterfall chart saved")
+
+
+
+# ============================================================
+# IEEE-CIS WATERFALL
+# ============================================================
+print("\n\n" + "="*60)
+print("  IEEE-CIS COST DECOMPOSITION")
+print("="*60)
+
+ieee_booster = lgb.Booster(model_file="artifacts/ieee/model.lgb")
+ieee_calibrator = joblib.load("artifacts/ieee/calibrator.joblib")
+
+from src.sentinel.features.ieee_builder import build_ieee_features, ieee_features_to_array
+
+ieee_df = pd.read_csv("data/raw/ieee/train_transaction.csv")
+ieee_df = ieee_df.sort_values("TransactionDT").reset_index(drop=True)
+split_idx = int(len(ieee_df) * 0.8)
+ieee_val = ieee_df.iloc[split_idx:].copy()
+
+print(f"IEEE val set: {len(ieee_val):,} rows")
+print("Building features...")
+ieee_features = []
+for idx, row in ieee_val.iterrows():
+    ieee_features.append(ieee_features_to_array(build_ieee_features(row.to_dict())))
+
+X_ieee = np.vstack(ieee_features)
+y_ieee = ieee_val["isFraud"].values
+y_pred_ieee = ieee_calibrator.predict_proba(X_ieee)[:, 1]
+amounts_ieee = ieee_val["TransactionAmt"].values
+
+np.random.seed(42)
+i_fn_fraud = 0.0; i_fn_cb = 0.0
+i_fp_margin = 0.0; i_fp_friction = 0.0; i_fp_churn = 0.0
+i_ch_friction = 0.0; i_ch_fraud = 0.0
+i_rv_analyst = 0.0; i_rv_missed = 0.0
+i_counts = {"ALLOW_legit": 0, "ALLOW_fraud": 0, "CHALLENGE_legit": 0, "CHALLENGE_fraud": 0,
+            "REVIEW_legit": 0, "REVIEW_fraud": 0, "BLOCK_legit": 0, "BLOCK_fraud": 0}
+
+for i in range(len(y_ieee)):
+    amt = float(amounts_ieee[i])
+    true_label = y_ieee[i]
+    p = float(y_pred_ieee[i])
+    result = make_decision(p_fraud=p, amount=amt, costs=costs)
+    d = result["decision"]
+
+    if d == "ALLOW":
+        if true_label == 1:
+            i_fn_fraud += amt; i_fn_cb += costs["chargeback_fee_inr"]
+            i_counts["ALLOW_fraud"] += 1
+        else:
+            i_counts["ALLOW_legit"] += 1
+    elif d == "BLOCK":
+        if true_label == 0:
+            i_fp_margin += costs["gross_margin"] * amt
+            i_fp_friction += costs["friction_cost_inr"]
+            i_fp_churn += costs["churn_probability"] * costs["customer_ltv_inr"]
+            i_counts["BLOCK_legit"] += 1
+        else:
+            i_counts["BLOCK_fraud"] += 1
+    elif d == "CHALLENGE":
+        if true_label == 0:
+            i_ch_friction += costs.get("challenge_friction_inr", 15)
+            i_counts["CHALLENGE_legit"] += 1
+        else:
+            if np.random.random() > costs.get("fraudster_3ds_dropout", 0.95):
+                i_ch_fraud += amt + costs["chargeback_fee_inr"]
+            i_counts["CHALLENGE_fraud"] += 1
+    elif d == "REVIEW":
+        i_rv_analyst += costs["review_cost_inr"] + costs.get("review_delay_churn_inr", 30)
+        if true_label == 1 and np.random.random() > costs["analyst_catch_rate"]:
+            i_rv_missed += amt + costs["chargeback_fee_inr"]
+        if true_label == 1:
+            i_counts["REVIEW_fraud"] += 1
+        else:
+            i_counts["REVIEW_legit"] += 1
+
+i_total = i_fn_fraud + i_fn_cb + i_fp_margin + i_fp_friction + i_fp_churn + i_ch_friction + i_ch_fraud + i_rv_analyst + i_rv_missed
+
+print(f"\n  MISSED FRAUD:")
+print(f"    Fraud goods lost:       ₹{i_fn_fraud:>10,.0f}  ({i_fn_fraud/i_total*100:>5.1f}%)")
+print(f"    Chargeback fees:        ₹{i_fn_cb:>10,.0f}  ({i_fn_cb/i_total*100:>5.1f}%)")
+print(f"    Subtotal:               ₹{i_fn_fraud+i_fn_cb:>10,.0f}  ({(i_fn_fraud+i_fn_cb)/i_total*100:>5.1f}%)")
+
+print(f"\n  FALSE BLOCKS:")
+print(f"    Lost margin:            ₹{i_fp_margin:>10,.0f}  ({i_fp_margin/i_total*100:>5.1f}%)")
+print(f"    Friction cost:          ₹{i_fp_friction:>10,.0f}  ({i_fp_friction/i_total*100:>5.1f}%)")
+print(f"    Churn × LTV:            ₹{i_fp_churn:>10,.0f}  ({i_fp_churn/i_total*100:>5.1f}%)")
+print(f"    Subtotal:               ₹{i_fp_margin+i_fp_friction+i_fp_churn:>10,.0f}  ({(i_fp_margin+i_fp_friction+i_fp_churn)/i_total*100:>5.1f}%)")
+
+print(f"\n  CHALLENGE COSTS:")
+print(f"    Friction on legit:      ₹{i_ch_friction:>10,.0f}  ({i_ch_friction/i_total*100:>5.1f}%)")
+print(f"    Fraud through 3DS:      ₹{i_ch_fraud:>10,.0f}  ({i_ch_fraud/i_total*100:>5.1f}%)")
+print(f"    Subtotal:               ₹{i_ch_friction+i_ch_fraud:>10,.0f}  ({(i_ch_friction+i_ch_fraud)/i_total*100:>5.1f}%)")
+
+print(f"\n  REVIEW COSTS:")
+print(f"    Analyst time + delay:   ₹{i_rv_analyst:>10,.0f}  ({i_rv_analyst/i_total*100:>5.1f}%)")
+print(f"    Missed by analyst:      ₹{i_rv_missed:>10,.0f}  ({i_rv_missed/i_total*100:>5.1f}%)")
+print(f"    Subtotal:               ₹{i_rv_analyst+i_rv_missed:>10,.0f}  ({(i_rv_analyst+i_rv_missed)/i_total*100:>5.1f}%)")
+
+print(f"\n  Total: ₹{i_total:,.0f}")
+
+print(f"\n  DECISION COUNTS:")
+for k, v in sorted(i_counts.items()):
+    print(f"    {k:<25s}: {v:>8,}")
+
+# --- Side-by-side comparison ---
+print(f"\n{'='*60}")
+print(f"  SPARKOV vs IEEE-CIS COST STRUCTURE")
+print(f"{'='*60}")
+print(f"  {'Source':<25s} {'Sparkov':>15s} {'IEEE-CIS':>15s}")
+print(f"  {'Missed fraud':<25s} {'₹'+f'{cost_fn_fraud+cost_fn_chargeback:,.0f}':>15s} ({'₹'+f'{i_fn_fraud+i_fn_cb:,.0f}':>15s})")
+print(f"  {'False blocks':<25s} {'₹'+f'{cost_fp_margin+cost_fp_friction+cost_fp_churn:,.0f}':>15s} ({'₹'+f'{i_fp_margin+i_fp_friction+i_fp_churn:,.0f}':>15s})")
+print(f"  {'Challenge costs':<25s} {'₹'+f'{cost_challenge_friction+cost_challenge_fraud:,.0f}':>15s} ({'₹'+f'{i_ch_friction+i_ch_fraud:,.0f}':>15s})")
+print(f"  {'Review costs':<25s} {'₹'+f'{cost_review_analyst+cost_review_missed:,.0f}':>15s} ({'₹'+f'{i_rv_analyst+i_rv_missed:,.0f}':>15s})")
+print(f"  {'TOTAL':<25s} {'₹'+f'{total:,.0f}':>15s} ({'₹'+f'{i_total:,.0f}':>15s})")
+
+# --- IEEE waterfall plot ---
+i_categories = [
+    "Missed Fraud\n(goods)", "Missed Fraud\n(chargeback)",
+    "False Block\n(margin)", "False Block\n(friction)", "False Block\n(churn)",
+    "Challenge\n(friction)", "Challenge\n(fraud through)",
+    "Review\n(analyst)", "Review\n(missed)",
+]
+i_values = [i_fn_fraud, i_fn_cb, i_fp_margin, i_fp_friction, i_fp_churn,
+            i_ch_friction, i_ch_fraud, i_rv_analyst, i_rv_missed]
+i_colors = ["#e74c3c", "#e74c3c", "#f39c12", "#f39c12", "#f39c12",
+            "#3498db", "#3498db", "#9b59b6", "#9b59b6"]
+
+fig, ax = plt.subplots(figsize=(14, 6))
+bars = ax.bar(i_categories, i_values, color=i_colors, width=0.7)
+for bar, val in zip(bars, i_values):
+    if val > 0:
+        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 2000,
+                f"₹{val:,.0f}", ha="center", fontsize=9, fontweight="bold")
+ax.set_ylabel("₹ Cost", fontsize=12)
+ax.set_title(f"IEEE-CIS: Where Does ₹{i_total:,.0f} Actually Come From?", fontsize=13)
+from matplotlib.patches import Patch
+legend_elements = [
+    Patch(facecolor="#e74c3c", label="Missed Fraud"),
+    Patch(facecolor="#f39c12", label="False Blocks"),
+    Patch(facecolor="#3498db", label="Challenge Costs"),
+    Patch(facecolor="#9b59b6", label="Review Costs"),
+]
+ax.legend(handles=legend_elements, fontsize=10)
+plt.xticks(rotation=15, ha="right")
+plt.tight_layout()
+plt.savefig(PLOTS / "cost_waterfall_ieee.png", dpi=150)
+plt.close()
+print("\n✅ IEEE waterfall chart saved")
