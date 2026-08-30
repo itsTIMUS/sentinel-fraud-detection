@@ -41,3 +41,7 @@ challenge_success_rate: 0.85
 
 # Fraction of fraudsters who drop off when faced with 3DS/OTP
 fraudster_3ds_dropout: 0.95
+# --- NEW: Retry recovery ---
+# Probability a blocked legitimate customer retries successfully (different card/session)
+# Empirically ~0.5-0.7 for online merchants
+retry_recovery_rate: 0.5

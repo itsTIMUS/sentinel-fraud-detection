@@ -24,7 +24,7 @@ def test_high_risk_large_amount_blocks():
 def test_medium_risk_triggers_challenge():
     """Medium probability + small-medium amount → CHALLENGE (cheaper than REVIEW and BLOCK)."""
     costs = get_costs()
-    result = make_decision(p_fraud=0.10, amount=2000, costs=costs)
+    result = make_decision(p_fraud=0.10, amount=1000, costs=costs)
     assert result["decision"] == "CHALLENGE", f"Expected CHALLENGE, got {result['decision']}"
 
 

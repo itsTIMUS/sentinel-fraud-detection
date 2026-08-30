@@ -21,9 +21,14 @@ def expected_cost_allow(p_fraud: float, amount: float, costs: dict) -> float:
 
 
 def expected_cost_block(p_fraud: float, amount: float, costs: dict) -> float:
-    """Expected ₹ loss if we BLOCK this transaction."""
+    """Expected ₹ loss if we BLOCK this transaction.
+    
+    Includes retry recovery: ~50% of blocked legit customers try again,
+    so the true lost margin is only (1-ρ) × margin × amount.
+    """
+    rho = costs.get("retry_recovery_rate", 0.0)
     return (1 - p_fraud) * (
-        costs["gross_margin"] * amount
+        (1 - rho) * costs["gross_margin"] * amount
         + costs["friction_cost_inr"]
         + costs["churn_probability"] * costs["customer_ltv_inr"]
     )
