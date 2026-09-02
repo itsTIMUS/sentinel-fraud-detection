@@ -768,3 +768,181 @@ Not all parameters are learnable from passive observation:
 
 ### Decision: simulation only, not live in API
 Thompson Sampling adds randomness to decisions. In a live demo, a judge might see the system ALLOW something suspicious and think it's broken. Explaining "it's exploring" is harder than showing convergence charts. The simulation proves the concept; the API stays deterministic.
+
+
+## 2026-08-29 — Thompson Sampling Simulation
+
+### What we built
+Offline simulation processing 50,000 test transactions. System starts with deliberately WRONG cost parameter estimates, observes real outcomes, and updates beliefs using Bayesian updating.
+
+### Starting priors vs learned values
+| Parameter | Prior (wrong) | Learned | True Value | Status |
+|---|---|---|---|---|
+| chargeback_fee_inr | ₹2,000 | ₹1,531 | ₹1,500 | ✅ Converged |
+| challenge_success_rate | 0.70 | 0.71 | 0.85 | ⚠️ Slow (rare observations) |
+| fraudster_3ds_dropout | 0.80 | 0.975 | 0.95 | ✅ Converged |
+
+### Key numbers
+- Exploration rate: 0.2% of decisions (114/50,000) differed from optimal
+- Exploration cost: ₹4,641 (₹45,723 Thompson vs ₹41,082 fixed) = 11% overhead
+- Overhead shrinks as parameters converge
+
+### Identifiability caveat
+LEARNABLE from passive observation: chargeback_fee (bank statement), challenge_success_rate (OTP completion), fraudster_3ds_dropout (challenge outcome), analyst_catch_rate (analyst decisions).
+
+NOT LEARNABLE passively: churn_probability (months to observe), customer_ltv (months/years), friction_cost (unmeasurable). These need deliberate A/B tests.
+
+### Decision: simulation only, not live in API
+Thompson Sampling adds randomness. In a live demo, a judge might see an "exploratory" ALLOW on a suspicious transaction and think the system is broken. The simulation proves the concept; the API stays deterministic.
+
+---
+
+## 2026-08-29 — Docker Configuration
+
+### Files created
+- `Dockerfile` — Python 3.11-slim, copies project, exposes ports 8000 + 8501
+- `docker-compose.yml` — two services (api + dashboard) with health checks
+- `.dockerignore` — excludes venv, raw data, git, pycache
+
+### Decision: Docker files committed but not built
+Docker Desktop not installed on development machine. Files are in the repo so judges with Docker can `docker compose up`. README provides both Docker and non-Docker run instructions. The files prove production thinking without requiring Docker for the demo.
+
+---
+
+## 2026-08-30 — File Cleanup
+
+### Removed redundant files
+- `tree_output.txt` — temp diagnostic file
+- `ieee-fraud-detection.zip` — already extracted, 118MB waste
+- `train_ieee_v2.py` — abandoned v2 approach
+- `fix_calibrator.py`, `fix_review.py` — one-time fix scripts
+- `model_lr.joblib`, `label_encoder.joblib` — old Day 1 LR model
+- `load_tests/` — empty folder never used
+
+### Why cleanup matters
+A cluttered repo signals disorganization. Judges scanning the file tree should see only files that serve a purpose.
+
+---
+
+## 2026-09-01 — IEEE-CIS v3: Entity Resolution + Final Model
+
+### Problem with v1
+30 features, mostly raw columns. PR-AUC 0.4969, precision 86.9%. Reason codes were weak ("high C1 value" means nothing to a human).
+
+### What v3 added
+
+**Entity Resolution (UID):**
+Constructed pseudo-account IDs: `card1 + addr1 + estimated_account_open_date`. Groups transactions by likely same person, not just same card. A fraudster using 5 stolen cards from the same address gets caught.
+
+**UID Aggregation Features:**
+- uid_count — how many transactions this entity has made
+- uid_mean_amt — what's this entity's average spend
+- uid_std_amt — how variable is their spending
+- uid_max_amt — largest transaction ever
+- amt_vs_uid_mean — is this amount unusual for this entity
+- uid_daily_mean — average transactions per day
+- uid_daily_max — peak daily transaction count
+
+**Card1 Aggregation:**
+- card1_count, card1_mean_amt, card1_std_amt
+- amt_vs_card1_mean — is this amount unusual for this card type
+
+**Addr1 Aggregation:**
+- addr1_count, addr1_mean_amt
+
+**Frequency Encoding:**
+- card1_freq, card2_freq, addr1_freq, P_emaildomain_freq
+- How common is this value in the training set? Rare cards are riskier.
+
+**Email Aggregation:**
+- email_count — how many transactions from this email domain
+
+**Better V Features:**
+78 selected V features (from competition winner analysis) instead of the original 8.
+
+### v3 results
+| Metric | v1 (30 features) | v3 (150 features) |
+|---|---|---|
+| PR-AUC | 0.4969 | 0.6240 (+25.6%) |
+| Precision | 86.9% | 92.2% |
+| Recall | 57.5% | 62.9% |
+| Savings | 75.2% | 75.4% |
+| Features | 30 | 150 |
+
+### Top features by importance (v3)
+1. uid_daily_mean (829K) — transactions per day per entity
+2. V265 (571K) — Vesta engineered feature
+3. uid_mean_amt (531K) — entity average spend
+4. card1_mean_amt (488K) — card type average spend
+5. C14 (483K) — counting feature
+
+### What we tried and rejected
+- **All 339 V features** — PR-AUC improved slightly (0.6362) but cost got worse (₹1,711K vs ₹1,546K). More features = more conservative model = lower recall = more missed fraud.
+- **Lower learning rate (0.01) + 5000 rounds** — same problem. Model became too precise, missed too much fraud.
+- **Amount pattern features** (amt_cents, amt_ends_00) — added noise, didn't improve results.
+
+### Key lesson
+More features ≠ better results. The sweet spot was 150 features with lr=0.03 and 2000 rounds. Entity resolution (UID) was the single biggest improvement — not more V features.
+
+---
+
+## 2026-09-02 — Dual-Model API + Dashboard Integration
+
+### IEEE-CIS API endpoint
+Added `/v1/score/ieee` endpoint alongside existing `/v1/score` (Sparkov). Both share:
+- Same `cost.py` and `make_decision()` — identical ₹ logic
+- Same audit ledger
+- Same `costs.yaml` parameters
+
+What differs:
+- Feature builder: `builder.py` (15 features) vs `ieee_serve.py` (150 features)
+- Model: `artifacts/sparkov/model.lgb` vs `artifacts/ieee/model.lgb`
+- Calibrator: separate calibrators per dataset
+
+### Serve-time lookup tables
+IEEE-CIS features include aggregations (uid_mean_amt, card1_freq) that are computed from training data. Saved as `artifacts/ieee/lookups.pkl` during training, loaded once at API startup. The `IEEEFeatureBuilder` class in `ieee_serve.py` uses these lookups to build features at serve time without needing the full training dataset.
+
+### Dashboard model selector
+Added radio buttons: "Sparkov (explainable)" / "IEEE-CIS (real-world)". Same UI, same cost chart, same reason codes display. Proves modularity visually.
+
+### Why this matters for the pitch
+"Same API, two models, two datasets, one cost engine" — this is the modularity claim made tangible. A judge can click both radio buttons and see the system score using different models with the same ₹ decision framework.
+
+### API endpoints summary
+| Endpoint | Model | Features | Use Case |
+|---|---|---|---|
+| `GET /health` | — | — | Liveness check |
+| `GET /ready` | — | — | Readiness check (all components) |
+| `POST /v1/score` | Sparkov | 15 (explainable) | Demo with human-readable reason codes |
+| `POST /v1/score/ieee` | IEEE-CIS | 150 (entity resolution) | Real-world data validation |
+
+---
+
+## Complete Final Results Summary
+
+### Sparkov (Simulated — Primary Demo)
+| Version | PR-AUC | Precision | Recall | ₹ Cost | Savings |
+|---|---|---|---|---|---|
+| Approve all | — | — | — | ₹4,350,825 | 0% |
+| Rules | 0.35 | — | — | ₹5,290,381 | -21.6% |
+| LR | 0.32 | — | — | ₹18,289,845 | -320% |
+| LightGBM raw | 0.97 | — | — | ₹338,557 | 92.2% |
+| LightGBM calibrated (3-action) | 0.95 | 94.8% | 95.6% | ₹309,487 | 92.9% |
+| **Sentinel v2 (4-action + CHALLENGE)** | **0.95** | **94.8%** | **95.6%** | **₹229,434** | **94.7%** |
+| Best fixed threshold (t=0.21) | — | — | — | ₹450,242 | 89.7% |
+| Oracle (perfect info) | — | — | — | ₹0 | 100% |
+
+**Sentinel captures 94.7% of achievable savings.**
+**Bootstrap 95% CI: 94.0% – 95.5%**
+
+### IEEE-CIS (Real Anonymized — Robustness Proof)
+| Version | PR-AUC | Precision | Recall | ₹ Cost | Savings |
+|---|---|---|---|---|---|
+| Approve all | — | — | — | ₹6,705,934 | 0% |
+| v1 (30 features, old policy) | 0.50 | 86.9% | 57.5% | ₹2,539,429 | 62.1% |
+| v1 (30 features, CHALLENGE policy) | 0.50 | 86.9% | 57.5% | ₹1,661,790 | 75.2% |
+| **v3 (150 features, entity resolution)** | **0.62** | **92.2%** | **62.9%** | **₹1,651,632** | **75.4%** |
+
+### Latency
+- p50: 12.4ms | p95: 14.7ms | p99: 33.0ms (Sparkov)
+- IEEE-CIS endpoint: ~8ms
