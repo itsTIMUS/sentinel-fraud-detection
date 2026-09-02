@@ -155,6 +155,44 @@ features["amt_vs_uid_max"] = features["amt"] / features["uid_max_amt"].clip(lowe
 features["hour"] = ((df["TransactionDT"] % (24 * 3600)) / 3600).astype(int)
 features["is_night"] = ((features["hour"] >= 22) | (features["hour"] <= 5)).astype(float)
 
+# --- Card1 aggregation ---
+print("  Computing card1 aggregations...")
+card1_stats = df.groupby("card1").agg(
+    card1_count=("TransactionAmt", "count"),
+    card1_mean_amt=("TransactionAmt", "mean"),
+    card1_std_amt=("TransactionAmt", "std"),
+).fillna(0)
+features["card1_count"] = df["card1"].map(card1_stats["card1_count"]).fillna(0)
+features["card1_mean_amt"] = df["card1"].map(card1_stats["card1_mean_amt"]).fillna(0)
+features["card1_std_amt"] = df["card1"].map(card1_stats["card1_std_amt"]).fillna(0)
+features["amt_vs_card1_mean"] = features["amt"] / features["card1_mean_amt"].clip(lower=1)
+
+# --- Addr1 aggregation ---
+print("  Computing addr1 aggregations...")
+addr1_stats = df.groupby("addr1").agg(
+    addr1_count=("TransactionAmt", "count"),
+    addr1_mean_amt=("TransactionAmt", "mean"),
+).fillna(0)
+features["addr1_count"] = df["addr1"].map(addr1_stats["addr1_count"]).fillna(0)
+features["addr1_mean_amt"] = df["addr1"].map(addr1_stats["addr1_mean_amt"]).fillna(0)
+
+# --- UID velocity (transactions per time window) ---
+print("  Computing UID velocity...")
+df["day_int"] = (df["TransactionDT"] / 86400).astype(int)
+uid_daily = df.groupby(["uid", "day_int"]).size().reset_index(name="uid_daily_count")
+uid_daily_stats = uid_daily.groupby("uid")["uid_daily_count"].agg(["mean", "max"]).fillna(0)
+uid_daily_stats.columns = ["uid_daily_mean", "uid_daily_max"]
+features["uid_daily_mean"] = df["uid"].map(uid_daily_stats["uid_daily_mean"]).fillna(0)
+features["uid_daily_max"] = df["uid"].map(uid_daily_stats["uid_daily_max"]).fillna(0)
+
+# --- Email domain aggregation ---
+print("  Computing email aggregations...")
+email_stats = df.groupby("P_emaildomain").agg(
+    email_count=("TransactionAmt", "count"),
+    email_fraud_rate=("isFraud", "mean"),
+).fillna(0)
+features["email_count"] = df["P_emaildomain"].map(email_stats["email_count"]).fillna(0)
+features["email_fraud_rate"] = df["P_emaildomain"].map(email_stats["email_fraud_rate"]).fillna(0)
 elapsed = time.time() - start
 print(f"Features built in {elapsed:.0f}s | Shape: {features.shape}")
 
@@ -199,7 +237,7 @@ params = {
 
 model = lgb.train(
     params, train_data,
-    num_boost_round=1000,
+    num_boost_round=2000,
     valid_sets=[val_data],
     callbacks=[lgb.early_stopping(50), lgb.log_evaluation(50)],
 )
