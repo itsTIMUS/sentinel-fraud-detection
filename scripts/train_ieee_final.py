@@ -53,7 +53,6 @@ features["log_amt"] = np.log1p(df["TransactionAmt"])
 features["amt"] = df["TransactionAmt"]
 features["amt_decimal"] = (df["TransactionAmt"] - df["TransactionAmt"].astype(int)).round(2)
 features["amt_is_round"] = (features["amt_decimal"] == 0).astype(float)
-
 # --- Product code ---
 features["ProductCD"] = df["ProductCD"].map({"W": 0, "C": 1, "R": 2, "H": 3, "S": 4}).fillna(-1)
 
@@ -91,6 +90,7 @@ for col in ["D1", "D2", "D3", "D4", "D5", "D10", "D11", "D15"]:
     features[col] = df[col].fillna(-1)
 
 # --- Top V features (from competition winners) ---
+# Use ALL V features
 top_v = ["V12", "V13", "V14", "V17", "V20", "V23", "V26", "V29", "V30",
          "V35", "V36", "V37", "V38", "V40", "V44", "V45", "V47", "V48",
          "V54", "V56", "V62", "V69", "V75", "V76", "V78", "V82", "V83",
@@ -192,7 +192,6 @@ email_stats = df.groupby("P_emaildomain").agg(
     email_fraud_rate=("isFraud", "mean"),
 ).fillna(0)
 features["email_count"] = df["P_emaildomain"].map(email_stats["email_count"]).fillna(0)
-features["email_fraud_rate"] = df["P_emaildomain"].map(email_stats["email_fraud_rate"]).fillna(0)
 elapsed = time.time() - start
 print(f"Features built in {elapsed:.0f}s | Shape: {features.shape}")
 
