@@ -18,6 +18,7 @@ from src.sentinel.features import build_features, features_to_array
 from src.sentinel.model_wrapper import LGBMWrapper
 from src.sentinel.explain import get_reason_codes
 from src.sentinel.store import VelocityStore, DegradedVelocityStore
+from src.sentinel.features.ieee_serve import IEEEFeatureBuilder
 
 # --- App ---
 app = FastAPI(
@@ -49,6 +50,19 @@ print("✅ LightGBM model loaded and warmed")
 print("✅ Calibrator loaded")
 print("✅ Cost config loaded")
 print("✅ Audit ledger initialized")
+
+
+# Load IEEE model (optional — for dual-dataset scoring)
+try:
+    ieee_booster = lgb.Booster(model_file="artifacts/ieee/model.lgb")
+    ieee_calibrator = joblib.load("artifacts/ieee/calibrator.joblib")
+    ieee_features = IEEEFeatureBuilder("artifacts/ieee/lookups.pkl")
+    ieee_booster.predict(np.zeros((1, len(ieee_features.feature_columns))))  # warm
+    print("✅ IEEE-CIS model loaded")
+    IEEE_AVAILABLE = True
+except Exception as e:
+    print(f"⚠️ IEEE-CIS model not available: {e}")
+    IEEE_AVAILABLE = False
 
 
 # --- Request / Response schemas ---
@@ -209,6 +223,41 @@ def score_transaction(txn: TransactionRequest):
             degraded=is_degraded,
             reason_codes=reasons,
         )
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=str(e))
 
+    
+# --- IEEE-CIS Endpoint ---
+@app.post("/v1/score/ieee")
+def score_ieee_transaction(txn: dict):
+    """Score using IEEE-CIS model — proves dual-dataset architecture."""
+    if not IEEE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="IEEE-CIS model not loaded")
+
+    start = time.perf_counter()
+    try:
+        features = ieee_features.build_features(txn)
+        feature_array = ieee_features.to_array(features).reshape(1, -1)
+
+        p_fraud = float(ieee_calibrator.predict_proba(feature_array)[:, 1][0])
+        result = make_decision(p_fraud=p_fraud, amount=float(txn.get("TransactionAmt", 0)), costs=costs)
+
+        latency = (time.perf_counter() - start) * 1000
+        dec_id = f"dec_{uuid.uuid4().hex[:12]}"
+
+        return {
+            "decision_id": dec_id,
+            "decision": result["decision"],
+            "risk_probability": result["risk_probability"],
+            "expected_loss_if_allowed_inr": result["expected_loss_if_allowed_inr"],
+            "expected_loss_if_challenged_inr": result["expected_loss_if_challenged_inr"],
+            "expected_loss_if_reviewed_inr": result["expected_loss_if_reviewed_inr"],
+            "expected_loss_if_blocked_inr": result["expected_loss_if_blocked_inr"],
+            "expected_profit_inr": result["expected_profit_inr"],
+            "amount_inr": result["amount_inr"],
+            "model_version": "ieee-v3-final",
+            "latency_ms": round(latency, 2),
+            "dataset": "ieee-cis",
+        }
     except Exception as e:
         raise HTTPException(status_code=422, detail=str(e))

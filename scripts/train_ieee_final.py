@@ -359,7 +359,23 @@ json.dump({
     "num_features": len(feature_names),
     "version": "v3-final",
 }, open(artifacts / "metrics.json", "w"), indent=2)
+# Save lookup tables for serve time
+print("Saving lookup tables...")
+import pickle
 
+lookups = {
+    "uid_stats": uid_stats.to_dict(),
+    "card1_stats": card1_stats.to_dict(),
+    "addr1_stats": addr1_stats.to_dict(),
+    "email_stats": email_stats.to_dict(),
+    "card1_freq": df["card1"].value_counts(normalize=True).to_dict(),
+    "card2_freq": df["card2"].value_counts(normalize=True).to_dict(),
+    "addr1_freq": df["addr1"].value_counts(normalize=True).to_dict(),
+    "email_map": EMAIL_MAP,
+}
+with open(artifacts / "lookups.pkl", "wb") as f:
+    pickle.dump(lookups, f)
+print("✅ Lookup tables saved")
 print("✅ IEEE-CIS final model saved")
 
 # Compare all versions
